@@ -416,6 +416,7 @@ impl BrowserManager {
                     "Target.createTarget",
                     &CreateTargetParams {
                         url: "about:blank".to_string(),
+                        background: None,
                     },
                     None,
                 )
@@ -784,6 +785,7 @@ impl BrowserManager {
                 "Target.createTarget",
                 &CreateTargetParams {
                     url: "about:blank".to_string(),
+                    background: None,
                 },
                 None,
             )
@@ -846,7 +848,7 @@ impl BrowserManager {
             .collect()
     }
 
-    pub async fn tab_new(&mut self, url: Option<&str>) -> Result<Value, String> {
+    pub async fn tab_new(&mut self, url: Option<&str>, background: bool) -> Result<Value, String> {
         let target_url = url.unwrap_or("about:blank");
 
         let result: CreateTargetResult = self
@@ -855,6 +857,7 @@ impl BrowserManager {
                 "Target.createTarget",
                 &CreateTargetParams {
                     url: target_url.to_string(),
+                    background: if background { Some(true) } else { None },
                 },
                 None,
             )
@@ -887,7 +890,7 @@ impl BrowserManager {
         Ok(json!({ "index": index, "url": target_url }))
     }
 
-    pub async fn tab_switch(&mut self, index: usize) -> Result<Value, String> {
+    pub async fn tab_switch(&mut self, index: usize, background: bool) -> Result<Value, String> {
         if index >= self.pages.len() {
             return Err(format!(
                 "Tab index {} out of range (0-{})",
@@ -900,11 +903,12 @@ impl BrowserManager {
         let session_id = self.pages[index].session_id.clone();
         self.enable_domains(&session_id).await?;
 
-        // Bring tab to front
-        let _ = self
-            .client
-            .send_command("Page.bringToFront", None, Some(&session_id))
-            .await;
+        if !background {
+            let _ = self
+                .client
+                .send_command("Page.bringToFront", None, Some(&session_id))
+                .await;
+        }
 
         let url = self.get_url().await.unwrap_or_default();
         let title = self.get_title().await.unwrap_or_default();

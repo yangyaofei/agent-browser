@@ -238,6 +238,9 @@ pub struct DaemonState {
     /// When true, automatically dismiss `beforeunload` dialogs and accept `alert`
     /// dialogs so they never block the agent.  Enabled by default.
     pub auto_dialog: bool,
+    /// When true, new tabs are created in the background and tab switches skip
+    /// Page.bringToFront so the user's current browser tab is not disturbed.
+    pub background: bool,
     /// Shared slot for stream server to receive CDP client when browser launches.
     pub stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
     /// Stream server instance kept alive so the broadcast channel remains open.
@@ -291,6 +294,10 @@ impl DaemonState {
             pending_dialog: None,
             auto_dialog: !matches!(
                 env::var("AGENT_BROWSER_NO_AUTO_DIALOG").as_deref(),
+                Ok("1" | "true" | "yes")
+            ),
+            background: matches!(
+                env::var("AGENT_BROWSER_BACKGROUND").as_deref(),
                 Ok("1" | "true" | "yes")
             ),
             stream_client: None,
@@ -1481,7 +1488,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
 /// subsequent navigations don't hijack the user's existing tabs.
 async fn connect_auto_with_fresh_tab() -> Result<BrowserManager, String> {
     let mut mgr = BrowserManager::connect_auto().await?;
-    mgr.tab_new(None).await?;
+    mgr.tab_new(None, false).await?;
     let session_id = mgr.active_session_id()?.to_string();
     let _ = mgr
         .client
@@ -2506,7 +2513,7 @@ async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
         let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
         state.ref_map.clear();
-        mgr.tab_new(Some(&href)).await?;
+        mgr.tab_new(Some(&href), state.background).await?;
 
         return Ok(json!({ "clicked": selector, "newTab": true, "url": href }));
     }
@@ -3558,7 +3565,7 @@ async fn handle_tab_new(cmd: &Value, state: &mut DaemonState) -> Result<Value, S
     state.ref_map.clear();
     state.iframe_sessions.clear();
     state.active_frame_id = None;
-    mgr.tab_new(url).await
+    mgr.tab_new(url, state.background).await
 }
 
 async fn handle_tab_switch(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
@@ -3570,7 +3577,7 @@ async fn handle_tab_switch(cmd: &Value, state: &mut DaemonState) -> Result<Value
     state.ref_map.clear();
     state.iframe_sessions.clear();
     state.active_frame_id = None;
-    let result = mgr.tab_switch(index).await?;
+    let result = mgr.tab_switch(index, state.background).await?;
 
     if let Some(ref server) = state.stream_server {
         if let Ok(dims) = mgr
