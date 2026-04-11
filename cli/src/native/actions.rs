@@ -1486,14 +1486,16 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
 
 /// Connect to a running Chrome via auto-discovery and open a fresh tab so
 /// subsequent navigations don't hijack the user's existing tabs.
-async fn connect_auto_with_fresh_tab() -> Result<BrowserManager, String> {
+async fn connect_auto_with_fresh_tab(background: bool) -> Result<BrowserManager, String> {
     let mut mgr = BrowserManager::connect_auto().await?;
-    mgr.tab_new(None, false).await?;
-    let session_id = mgr.active_session_id()?.to_string();
-    let _ = mgr
-        .client
-        .send_command("Page.bringToFront", None, Some(&session_id))
-        .await;
+    mgr.tab_new(None, background).await?;
+    if !background {
+        let session_id = mgr.active_session_id()?.to_string();
+        let _ = mgr
+            .client
+            .send_command("Page.bringToFront", None, Some(&session_id))
+            .await;
+    }
     Ok(mgr)
 }
 
@@ -1535,7 +1537,7 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
 
     if env::var("AGENT_BROWSER_AUTO_CONNECT").is_ok() {
         state.reset_input_state();
-        state.browser = Some(connect_auto_with_fresh_tab().await?);
+        state.browser = Some(connect_auto_with_fresh_tab(state.background).await?);
         state.subscribe_to_browser_events();
         state.start_fetch_handler();
         state.start_dialog_handler();
@@ -1825,7 +1827,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
 
     if auto_connect {
         state.reset_input_state();
-        state.browser = Some(connect_auto_with_fresh_tab().await?);
+        state.browser = Some(connect_auto_with_fresh_tab(state.background).await?);
         state.subscribe_to_browser_events();
         state.start_fetch_handler();
         state.start_dialog_handler();
@@ -2524,8 +2526,7 @@ async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
 
         let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
         state.ref_map.clear();
-        let bg = cmd.get("background").and_then(|v| v.as_bool()).unwrap_or(state.background);
-        mgr.tab_new(Some(&href), bg).await?;
+        mgr.tab_new(Some(&href), state.background).await?;
 
         return Ok(json!({ "clicked": selector, "newTab": true, "url": href }));
     }
@@ -3574,11 +3575,10 @@ async fn handle_tab_list(state: &DaemonState) -> Result<Value, String> {
 async fn handle_tab_new(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
     let url = cmd.get("url").and_then(|v| v.as_str());
-    let background = cmd.get("background").and_then(|v| v.as_bool()).unwrap_or(state.background);
     state.ref_map.clear();
     state.iframe_sessions.clear();
     state.active_frame_id = None;
-    mgr.tab_new(url, background).await
+    mgr.tab_new(url, state.background).await
 }
 
 async fn handle_tab_switch(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
@@ -3587,11 +3587,10 @@ async fn handle_tab_switch(cmd: &Value, state: &mut DaemonState) -> Result<Value
         .get("index")
         .and_then(|v| v.as_u64())
         .ok_or("Missing 'index' parameter")? as usize;
-    let background = cmd.get("background").and_then(|v| v.as_bool()).unwrap_or(state.background);
     state.ref_map.clear();
     state.iframe_sessions.clear();
     state.active_frame_id = None;
-    let result = mgr.tab_switch(index, background).await?;
+    let result = mgr.tab_switch(index, state.background).await?;
 
     if let Some(ref server) = state.stream_server {
         if let Ok(dims) = mgr
